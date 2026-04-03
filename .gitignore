@@ -1,0 +1,11 @@
+.venv/
+.idea/
+.DS_Store
+__pycache__/
+*.pyc
+
+# Raw data files
+*.csv
+
+# Logs
+LOG.md
