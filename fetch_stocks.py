@@ -1,33 +1,15 @@
 import argparse
 import csv
-import requests
-from datetime import datetime
+import pandas as pd
+import yfinance as yf
 from pathlib import Path
 
-BASE = "https://api.binance.com/api/v3/klines"
-MAX_LIMIT = 1000
-COLUMNS = [
-    "timestamp", "open", "high", "low", "close",
-    "volume", "quote_volume", "num_trades",
-    "taker_buy_volume", "taker_buy_quote_volume",
-]
+COLUMNS = ["timestamp", "open", "high", "low", "close", "adj_close", "volume"]
 
-DEFAULT_RAW_DIR = Path(__file__).parent / "Data" / "raw" / "Crypto"
+DEFAULT_RAW_DIR = Path(__file__).parent / "Data" / "raw" / "Stocks"
 
 
 # ── Clean helpers ──────────────────────────────────────────────────────────────
-
-def detect_gaps(rows):
-    if len(rows) < 2:
-        return []
-    interval_ms = rows[1][0] - rows[0][0]
-    gaps = []
-    for i in range(1, len(rows)):
-        diff = rows[i][0] - rows[i - 1][0]
-        if diff > interval_ms:
-            gaps.append((rows[i - 1][0], rows[i][0], int(diff // interval_ms - 1)))
-    return gaps
-
 
 def clean(rows):
     original = len(rows)
@@ -44,9 +26,8 @@ def clean(rows):
             casted.append([
                 int(r[0]),
                 float(r[1]), float(r[2]), float(r[3]), float(r[4]),  # OHLC
-                float(r[5]), float(r[6]),                             # volume, quote_volume
-                int(r[7]),                                            # num_trades
-                float(r[8]), float(r[9]),                            # taker buy volume/quote
+                float(r[5]),                                           # adj_close
+                int(r[6]),                                             # volume (shares)
             ])
         except (ValueError, IndexError):
             cast_error_rows.append(r)
@@ -54,16 +35,13 @@ def clean(rows):
     valid, invalid_rows = [], []
     for r in casted:
         bad = (
-            r[2] < r[3]                      # high < low
-            or any(r[i] <= 0 for i in range(1, 5))  # OHLC <= 0
-            or r[5] < 0 or r[6] < 0          # volume / quote_volume < 0
-            or r[7] < 0                      # num_trades < 0
-            or r[8] < 0 or r[8] > r[5]       # taker_buy_volume out of range
-            or r[9] < 0 or r[9] > r[6]       # taker_buy_quote_volume out of range
+            r[2] < r[3]                             # high < low
+            or any(r[i] <= 0 for i in range(1, 6))  # OHLC + adj_close <= 0
+            or r[6] < 0                             # volume < 0
         )
         (invalid_rows if bad else valid).append(r)
 
-    zero_volume_rows = [r for r in valid if r[5] == 0]
+    zero_volume_rows = [r for r in valid if r[6] == 0]
 
     return valid, {
         "original": original,
@@ -72,7 +50,6 @@ def clean(rows):
         "invalid_rows": invalid_rows,
         "zero_volume_rows": zero_volume_rows,
         "final": len(valid),
-        "gaps": detect_gaps(valid),
     }
 
 
@@ -84,15 +61,8 @@ def print_report(report):
             print(f"    {r}")
     print(f"  {'original rows':<14}: {report['original']}")
     print(f"  {'final rows':<14}: {report['final']}")
-    gaps = report["gaps"]
-    if gaps:
-        print(f"  {'gaps detected':<14}: {len(gaps)} (total missing: {sum(g[2] for g in gaps)})")
-        for start, end, missing in gaps[:5]:
-            print(f"    {start} → {end}  ({missing} candles missing)")
-        if len(gaps) > 5:
-            print(f"    ... and {len(gaps) - 5} more")
-    else:
-        print(f"  {'gaps detected':<14}: none")
+    # Note: gap detection is omitted for stocks — weekends/holidays create
+    # natural gaps that are not data errors.
 
 
 def read_csv(path):
@@ -111,35 +81,27 @@ def write_csv(path, rows):
 
 # ── Fetch helpers ──────────────────────────────────────────────────────────────
 
-def fetch_batch(symbol, interval, start_ms):
-    resp = requests.get(BASE, params={
-        "symbol": symbol,
-        "interval": interval,
-        "startTime": start_ms,
-        "limit": MAX_LIMIT,
-    }, timeout=10)
-    resp.raise_for_status()
-    return resp.json()
+def fetch_stock(symbol, interval, start, end):
+    df = yf.download(
+        symbol, start=start, end=end, interval=interval,
+        auto_adjust=False, progress=False, actions=False,
+    )
+    if df.empty:
+        raise ValueError(f"No data returned for {symbol}. Check symbol and date range.")
 
+    # Flatten MultiIndex columns (yfinance >= 0.2.x with single ticker)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
 
-def fetch_all(symbol, interval, start_ms, end_ms):
-    rows, cur = [], start_ms
-    while cur < end_ms:
-        batch = fetch_batch(symbol, interval, cur)
-        if not batch:
-            break
-        for k in batch:
-            if k[0] >= end_ms:
-                return rows
-            # k[6]=close_time k[11]=ignore → skip both
-            rows.append([k[0], k[1], k[2], k[3], k[4], k[5], k[7], k[8], k[9], k[10]])
-        cur = batch[-1][0] + 1
-        print(f"  fetched up to {datetime.fromtimestamp(cur/1000).strftime('%Y-%m-%d')} ({len(rows)} rows)", end="\r")
+    rows = []
+    for ts, row in df.iterrows():
+        rows.append([
+            int(ts.timestamp() * 1000),
+            row["Open"], row["High"], row["Low"], row["Close"],
+            row["Adj Close"],
+            int(row["Volume"]),
+        ])
     return rows
-
-
-def to_ms(date_str):
-    return int(datetime.strptime(date_str, "%Y-%m-%d").timestamp() * 1000)
 
 
 # ── Actions ────────────────────────────────────────────────────────────────────
@@ -159,8 +121,8 @@ def do_fetch(args):
     out = Path(args.output) if args.output else DEFAULT_RAW_DIR / f"{args.symbol}_{args.interval}_{args.start}_{args.end}.csv"
 
     print(f"Fetching {args.symbol} {args.interval}  {args.start} → {args.end}")
-    rows = fetch_all(args.symbol, args.interval, to_ms(args.start), to_ms(args.end))
-    print(f"\nFetched: {len(rows)} rows")
+    rows = fetch_stock(args.symbol, args.interval, args.start, args.end)
+    print(f"Fetched: {len(rows)} rows")
 
     write_csv(out, rows)
     print(f"Saved:   {out}")
@@ -182,24 +144,30 @@ def do_clean(files):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Fetch and/or clean Binance K-line data",
+        description="Fetch and/or clean stock price data via yfinance (US, HK)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python fetch_klines.py --fetch --symbol BTCUSDT --interval 1h --start 2020-01-01 --end 2026-01-01
-  python fetch_klines.py --fetch --clean --symbol ETHUSDT --interval 4h --start 2020-01-01 --end 2026-01-01
-  python fetch_klines.py --clean Data/Crypto/BTCUSDT_1h_2020-01-01_2026-01-01.csv
+  python fetch_stocks.py --fetch --symbol AAPL --interval 1d --start 2020-01-01 --end 2026-01-01
+  python fetch_stocks.py --fetch --symbol 0700.HK --interval 1d --start 2020-01-01 --end 2026-01-01
+  python fetch_stocks.py --fetch --clean --symbol TSLA --interval 1d --start 2020-01-01 --end 2026-01-01
+  python fetch_stocks.py --clean Data/Stocks/AAPL_1d_2020-01-01_2026-01-01.csv
+
+Intervals: 1m 2m 5m 15m 30m 60m 90m 1h 1d 5d 1wk 1mo 3mo
+  Note: intraday intervals (< 1d) only available for the last 60 days.
+
+HK stocks use .HK suffix:  0700.HK (Tencent)  9988.HK (Alibaba)
         """,
     )
 
-    parser.add_argument("--fetch", action="store_true", help="Fetch K-line data from Binance")
+    parser.add_argument("--fetch", action="store_true", help="Fetch stock data via yfinance")
     parser.add_argument("--clean", nargs="*", metavar="FILE",
                         help="Clean CSV file(s). With --fetch: cleans the fetched file. Alone: requires file path(s).")
-    parser.add_argument("--symbol",   help="Trading pair, e.g. BTCUSDT")
-    parser.add_argument("--interval", help="Interval: 1m 5m 15m 1h 4h 1d 1w")
+    parser.add_argument("--symbol",   help="Ticker symbol, e.g. AAPL or 0700.HK")
+    parser.add_argument("--interval", help="Interval: 1m 2m 5m 15m 30m 60m 90m 1h 1d 5d 1wk 1mo 3mo")
     parser.add_argument("--start",    help="Start date YYYY-MM-DD")
     parser.add_argument("--end",      help="End date YYYY-MM-DD (exclusive)")
-    parser.add_argument("--output",   help="Output CSV path (default: Data/raw/Crypto/<SYMBOL>_<INTERVAL>_<START>_<END>.csv)")
+    parser.add_argument("--output",   help="Output CSV path (default: Data/raw/Stocks/<SYMBOL>_<INTERVAL>_<START>_<END>.csv)")
 
     args = parser.parse_args()
 
