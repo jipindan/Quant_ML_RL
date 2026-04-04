@@ -4,8 +4,8 @@
 __pycache__/
 *.pyc
 
-# Raw data files
-*.csv
+# Data
+Data/
 
 # Logs
 LOG.md
