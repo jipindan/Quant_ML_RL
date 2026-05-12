@@ -200,10 +200,10 @@ Each pipeline run writes:
 |---|---|
 | `Data/panels/{stocks,crypto}.parquet` | Long-format OHLCV panel `(date, symbol, …)` with sector merged for stocks. |
 | `Data/factors/{stocks,crypto}.parquet` | Factor matrix `(date, symbol, f1, f2, …)`. **This is the Phase 2 input.** |
-| `Data/reports/{stocks,crypto}_factor_report.md` | Markdown report: IC/ICIR table, survivors, plots. |
-| `Data/reports/{stocks,crypto}_factor_summary.csv` | Same table in CSV form. |
-| `Data/reports/{stocks,crypto}_corr.png` | Correlation heatmap of survivors. |
-| `Data/reports/{stocks,crypto}_rolling_ic.png` | 3-month rolling mean IC for top factors. |
+| `reports/{stocks,crypto}_factor_report.md` | Markdown report: IC/ICIR table, survivors, plots. |
+| `reports/{stocks,crypto}_factor_summary.csv` | Same table in CSV form. |
+| `reports/{stocks,crypto}_corr.png` | Correlation heatmap of survivors. |
+| `reports/{stocks,crypto}_rolling_ic.png` | 3-month rolling mean IC for top factors. |
 
 ## Results snapshot
 
@@ -225,11 +225,12 @@ Each pipeline run writes:
 fetch_stocks.py, fetch_klines.py         data ingestion
 factors/                                  factor library
 scripts/                                  orchestrators / batch wrappers
+reports/                                  Phase 1 reports (tracked in git)
+  *_factor_report.md, *_summary.csv, *.png
 Data/                                     (gitignored)
   raw/{Stocks,Crypto}/<sym>_<ivl>_<start>_<end>.csv
   cleaned/{Stocks,Crypto}/...             same shape, post-cleaning
   universe/                                sp500_top200.csv, crypto_top30.csv
   panels/                                  stocks.parquet, crypto.parquet
   factors/                                 stocks.parquet, crypto.parquet  ← Phase 2 input
-  reports/                                 *_factor_report.md, *_summary.csv, *.png
 ```

@@ -30,7 +30,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt     # noqa: E402
 
-REPORTS = ROOT / "Data" / "reports"
+REPORTS = ROOT / "reports"
 FACTOR_DIR = ROOT / "Data" / "factors"
 
 
