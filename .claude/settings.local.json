@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import pandas, numpy, yfinance, requests; print\\('have:', pandas.__version__, numpy.__version__, yfinance.__version__\\)\")",
+      "Bash(\"C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\python.exe\" -c \"import pandas, numpy, yfinance, requests; print\\('have:', pandas.__version__, numpy.__version__, yfinance.__version__\\)\")",
+      "Bash(\"C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\pip.exe\" install *)",
+      "Bash(\"C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\python.exe\" -m pip install scipy pyarrow matplotlib tqdm lxml)",
+      "Bash(\"C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\python.exe\" -m ensurepip --upgrade)",
+      "Bash(\"C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\python.exe\" -m pip install scipy pyarrow matplotlib tqdm lxml tabulate)",
+      "Bash('C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\python.exe' -c ' *)",
+      "Bash(\"C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\python.exe\" scripts/download_universe.py --asset stocks --start 2018-01-01 --end 2025-01-01)",
+      "Bash(\"C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\python.exe\" fetch_stocks.py --fetch --clean --symbol SPY --interval 1d --start 2018-01-01 --end 2025-01-01)",
+      "Bash(PYTHONIOENCODING=utf-8 \"C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\python.exe\" fetch_stocks.py --fetch --clean --symbol SPY --interval 1d --start 2018-01-01 --end 2025-01-01)",
+      "Bash(PYTHONIOENCODING=utf-8 \"C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\python.exe\" scripts/run_phase1.py --asset stocks --start 2018-01-01 --end 2025-01-01)",
+      "Bash(PYTHONIOENCODING=utf-8 \"C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\python.exe\" scripts/build_universe_stocks.py)",
+      "Bash(PYTHONIOENCODING=utf-8 \"C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\python.exe\" scripts/download_universe.py --asset stocks --start 2010-01-01 --end 2025-01-01)",
+      "Bash(PYTHONIOENCODING=utf-8 \"C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\python.exe\" fetch_stocks.py --fetch --clean --symbol SPY --interval 1d --start 2010-01-01 --end 2025-01-01)",
+      "Bash(PYTHONIOENCODING=utf-8 \"C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\python.exe\" scripts/run_phase1.py --asset stocks --start 2010-01-01 --end 2025-01-01)",
+      "Bash(PYTHONIOENCODING=utf-8 \"C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\python.exe\" scripts/build_universe_crypto.py)",
+      "Bash(PYTHONIOENCODING=utf-8 \"C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\python.exe\" scripts/download_universe.py --asset crypto --start 2018-01-01 --end 2025-01-01 --sleep 0.1)",
+      "Bash(PYTHONIOENCODING=utf-8 \"C:\\\\Users\\\\Kush\\\\Documents\\\\Projects\\\\Quant_ML-RL\\\\.venv\\\\Scripts\\\\python.exe\" scripts/run_phase1.py --asset crypto --start 2018-01-01 --end 2025-01-01)"
+    ]
+  }
+}
