@@ -3,6 +3,10 @@ Load cleaned per-symbol CSVs into a single long-format panel parquet:
     (date, symbol, open, high, low, close, [adj_close,] volume, [crypto extras])
 
 Date is a normalized UTC date (no time) for daily data.
+
+NOTE: _read_one uses .dt.normalize(), which truncates intraday times. This is
+correct for daily bars but would collapse all 24 hourly rows of a day onto one
+date for 1h data — handle before building intraday panels (tracked in Plan.md).
 """
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ from tqdm import tqdm
 ROOT = Path(__file__).resolve().parent.parent
 CLEAN_STOCKS = ROOT / "Data" / "cleaned" / "Stocks"
 CLEAN_CRYPTO = ROOT / "Data" / "cleaned" / "Crypto"
+UNIVERSE_DIR = ROOT / "Data" / "universe"
 PANEL_DIR = ROOT / "Data" / "panels"
 
 
@@ -41,10 +46,10 @@ def build_panel(asset: str, interval: str, start: str, end: str,
     min_coverage: drop symbols whose row count is < min_coverage * median row count.
     """
     if asset == "stocks":
-        uni = pd.read_csv(ROOT / "Data" / "universe" / "sp500_top200.csv")
+        uni = pd.read_csv(UNIVERSE_DIR / "sp500_top200.csv")
         root = CLEAN_STOCKS
     elif asset == "crypto":
-        uni = pd.read_csv(ROOT / "Data" / "universe" / "crypto_top30.csv")
+        uni = pd.read_csv(UNIVERSE_DIR / "crypto_top30.csv")
         root = CLEAN_CRYPTO
     else:
         raise ValueError(asset)
@@ -80,3 +85,17 @@ def build_panel(asset: str, interval: str, start: str, end: str,
 
 def load_panel(asset: str) -> pd.DataFrame:
     return pd.read_parquet(PANEL_DIR / f"{asset}.parquet")
+
+
+if __name__ == "__main__":
+    import argparse
+
+    p = argparse.ArgumentParser(description="Build a long-format panel parquet from cleaned CSVs")
+    p.add_argument("--asset", choices=["stocks", "crypto"], required=True)
+    p.add_argument("--interval", default="1d")
+    p.add_argument("--start", required=True)
+    p.add_argument("--end", required=True)
+    p.add_argument("--min-coverage", type=float, default=0.8)
+    args = p.parse_args()
+
+    build_panel(args.asset, args.interval, args.start, args.end, args.min_coverage)

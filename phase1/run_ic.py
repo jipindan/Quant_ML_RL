@@ -1,12 +1,12 @@
 """
-Phase 1 orchestrator: build panel -> compute factors -> IC analysis ->
-screening -> report.
+Phase 1 — IC analysis, screening, and report.
 
-Usage:
-    python scripts/run_phase1.py --asset stocks --interval 1d --start 2010-01-01 --end 2025-01-01
-    python scripts/run_phase1.py --asset crypto --interval 1d --start 2018-01-01 --end 2025-01-01
+Load the factor matrix (run_factors.py) + the panel, compute IC/ICIR with sign
+stability, screen (IC filter then correlation pruning), and write the markdown
+report + plots to reports/.
 
-Optional: --bench SPY  (default SPY for stocks, BTCUSDT for crypto)
+    python phase1/run_ic.py --asset crypto --start 2018-01-01 --end 2025-01-01
+    python phase1/run_ic.py --asset stocks --start 2010-01-01 --end 2025-01-01
 """
 from __future__ import annotations
 
@@ -14,70 +14,23 @@ import argparse
 import sys
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "data_scripts"))
 
-from factors import build as b      # noqa: E402
-from factors import io as fio       # noqa: E402
-from factors import ic as fic       # noqa: E402
-from factors import screen as fscr  # noqa: E402
-from factors.catalog import catalog_for  # noqa: E402
+import panel as dpanel                       # noqa: E402  (data_scripts/panel.py)
+from factors import build as b               # noqa: E402
+from factors import ic as fic                # noqa: E402
+from factors import screen as fscr           # noqa: E402
 
-import matplotlib
+import matplotlib                            # noqa: E402
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt     # noqa: E402
+import matplotlib.pyplot as plt              # noqa: E402
 
 REPORTS = ROOT / "reports"
 FACTOR_DIR = ROOT / "Data" / "factors"
-
-
-def _load_bench(asset: str, bench_symbol: str | None, interval: str,
-                start: str, end: str) -> pd.DataFrame:
-    """Load benchmark panel (one symbol) and convert to bench dataframe."""
-    if asset == "stocks":
-        sub = "Stocks"
-        sym = bench_symbol or "SPY"
-        p = ROOT / "Data" / "cleaned" / sub / f"{sym}_{interval}_{start}_{end}.csv"
-    else:
-        sub = "Crypto"
-        sym = bench_symbol or "BTCUSDT"
-        p = ROOT / "Data" / "cleaned" / sub / f"{sym}_{interval}_{start}_{end}.csv"
-
-    if not p.exists():
-        raise FileNotFoundError(
-            f"Benchmark file missing: {p}\n"
-            f"Download it first, e.g.:\n"
-            f"  python fetch_{'stocks' if asset=='stocks' else 'klines'}.py "
-            f"--fetch --clean --symbol {sym} --interval {interval} "
-            f"--start {start} --end {end}"
-        )
-    df = pd.read_csv(p)
-    df["date"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True).dt.normalize()
-    return b.build_benchmark(df, asset)
-
-
-def build_factor_matrix(panel: pd.DataFrame, asset: str,
-                        bench: pd.DataFrame | None) -> pd.DataFrame:
-    factors = catalog_for(asset)
-    print(f"Computing {len(factors)} factors...")
-    out = pd.DataFrame({"date": panel["date"].values, "symbol": panel["symbol"].values})
-    for f in factors:
-        try:
-            vals = f.fn(panel, asset, bench)
-            if isinstance(vals, np.ndarray):
-                out[f.name] = vals
-            elif isinstance(vals, pd.Series):
-                out[f.name] = vals.values
-            else:
-                out[f.name] = np.asarray(vals)
-            print(f"  {f.name}: ok ({out[f.name].notna().sum():,} non-null)")
-        except Exception as e:
-            print(f"  {f.name}: FAILED -- {e}")
-            out[f.name] = np.nan
-    return out
 
 
 def run_ic(fac: pd.DataFrame, panel: pd.DataFrame, asset: str,
@@ -190,46 +143,49 @@ def main():
     p.add_argument("--interval", default="1d")
     p.add_argument("--start", required=True)
     p.add_argument("--end", required=True)
-    p.add_argument("--bench", default=None,
-                   help="Benchmark symbol (default: SPY for stocks, BTCUSDT for crypto)")
     p.add_argument("--horizon", type=int, default=5)
     args = p.parse_args()
 
-    # 1. Build panel
-    panel = fio.build_panel(args.asset, args.interval, args.start, args.end)
-
-    # 2. Build benchmark
-    bench = _load_bench(args.asset, args.bench, args.interval, args.start, args.end)
-
-    # 3. Compute factors
-    fac = build_factor_matrix(panel, args.asset, bench)
-
-    # Persist factor matrix
-    FACTOR_DIR.mkdir(parents=True, exist_ok=True)
     fac_path = FACTOR_DIR / f"{args.asset}.parquet"
-    fac.to_parquet(fac_path, index=False)
-    print(f"Saved factors: {fac_path}")
+    if not fac_path.exists():
+        raise FileNotFoundError(
+            f"Factor matrix missing: {fac_path}\n"
+            f"Run it first:  python phase1/run_factors.py --asset {args.asset} "
+            f"--start {args.start} --end {args.end}"
+        )
+    fac = pd.read_parquet(fac_path)
+    panel = dpanel.load_panel(args.asset)
 
-    # 4. IC analysis
+    # fac is built row-for-row from the panel; daily_ic aligns positionally, so
+    # the two artifacts must share identical (date, symbol) ordering. Catch a
+    # stale/rebuilt panel early rather than computing silently-wrong IC.
+    if not fac[["date", "symbol"]].reset_index(drop=True).equals(
+            panel[["date", "symbol"]].reset_index(drop=True)):
+        raise ValueError(
+            "Factor matrix and panel are misaligned (different (date, symbol) "
+            "ordering). Re-run run_factors.py after rebuilding the panel."
+        )
+
+    # 1. IC analysis
     print("Computing IC/ICIR...")
     summary, daily_ics = run_ic(fac, panel, args.asset, horizon=args.horizon)
 
-    # 5. Screen
+    # 2. Screen: IC filter, then correlation pruning on the wide factor matrix
     summary = fscr.apply_ic_filter(summary)
-    # For corr pruning we need wide factor matrix indexed by (date, symbol)
     fac_indexed = fac.set_index(["date", "symbol"])
     summary = fscr.prune_correlated(fac_indexed, summary)
 
-    # 6. Plots + report
+    # 3. Plots + report
     REPORTS.mkdir(parents=True, exist_ok=True)
     surv = summary.index[summary["passes_corr"]].tolist()
     heat = REPORTS / f"{args.asset}_corr.png"
     if len(surv) >= 2:
         make_corr_heatmap(fac_indexed[surv].corr(method="spearman"), heat)
     else:
-        # write a placeholder so the report link doesn't 404
-        fig, ax = plt.subplots(); ax.text(0.5, 0.5, "no survivors", ha="center")
-        fig.savefig(heat); plt.close(fig)
+        fig, ax = plt.subplots()
+        ax.text(0.5, 0.5, "no survivors", ha="center")
+        fig.savefig(heat)
+        plt.close(fig)
 
     ic_png = REPORTS / f"{args.asset}_rolling_ic.png"
     make_rolling_ic_plot(daily_ics, summary, top_k=min(8, len(summary)), out_path=ic_png)
@@ -238,7 +194,6 @@ def main():
     write_report(args.asset, summary, panel, args.horizon,
                  out_md, heat, ic_png, n_candidates=len(summary))
 
-    # Save summary CSV alongside
     summary.to_csv(REPORTS / f"{args.asset}_factor_summary.csv")
     print(f"Summary saved: {REPORTS / f'{args.asset}_factor_summary.csv'}")
 

@@ -20,61 +20,38 @@ pip install -r requirements.txt
 
 # Phase 0 — Data ingestion
 
-## Scripts
+## `data_scripts/fetch.py` — fetch + clean (Binance crypto / yfinance stocks)
 
-### `fetch_klines.py` — Crypto (Binance)
-
-```
-python fetch_klines.py (--fetch | --clean FILE [FILE ...] | --fetch --clean) [options]
-```
-
-| Argument | Default | Description |
-|---|---|---|
-| `--fetch` | — | Fetch K-line data from Binance |
-| `--clean [FILE ...]` | — | Clean CSV file(s). With `--fetch`: cleans the fetched file |
-| `--symbol` | required | Trading pair, e.g. `BTCUSDT` `ETHUSDT` |
-| `--interval` | required | `1m` `5m` `15m` `1h` `4h` `1d` `1w` |
-| `--start` | required | Start date `YYYY-MM-DD` |
-| `--end` | required | End date `YYYY-MM-DD` (exclusive) |
-| `--output` | `Data/Crypto/<SYMBOL>_<INTERVAL>_<START>_<END>.csv` | Output path |
-
-```bash
-python fetch_klines.py --fetch --symbol BTCUSDT --interval 1d --start 2020-01-01 --end 2026-01-01
-python fetch_klines.py --fetch --clean --symbol ETHUSDT --interval 1h --start 2020-01-01 --end 2026-01-01
-python fetch_klines.py --clean Data/Crypto/BTCUSDT_1d_2020-01-01_2026-01-01.csv
-```
-
----
-
-### `fetch_stocks.py` — Equities (US / HK)
+One script for both sources, selected with `--source`.
 
 ```
-python fetch_stocks.py (--fetch | --clean FILE [FILE ...] | --fetch --clean) [options]
+python data_scripts/fetch.py --source {crypto|stocks} (--fetch | --clean FILE [...] | --fetch --clean) [options]
 ```
 
 | Argument | Default | Description |
 |---|---|---|
-| `--fetch` | — | Fetch stock data via yfinance |
+| `--source` | required | `crypto` (Binance) or `stocks` (yfinance) |
+| `--fetch` | — | Fetch data from the source |
 | `--clean [FILE ...]` | — | Clean CSV file(s). With `--fetch`: cleans the fetched file |
-| `--symbol` | required | Ticker, e.g. `AAPL` (US) or `0700.HK` (HK) |
-| `--interval` | required | `1m` `2m` `5m` `15m` `30m` `60m` `90m` `1h` `1d` `5d` `1wk` `1mo` `3mo` |
-| `--start` | required | Start date `YYYY-MM-DD` |
-| `--end` | required | End date `YYYY-MM-DD` (exclusive) |
-| `--output` | `Data/Stocks/<SYMBOL>_<INTERVAL>_<START>_<END>.csv` | Output path |
+| `--symbol` | required with `--fetch` | `BTCUSDT` (crypto) / `AAPL`, `0700.HK` (stocks) |
+| `--interval` | required with `--fetch` | crypto: `1m 5m 15m 1h 4h 1d 1w`; stocks: `1m 2m 5m 15m 30m 60m 90m 1h 1d 5d 1wk 1mo 3mo` |
+| `--start` | required with `--fetch` | Start date `YYYY-MM-DD` |
+| `--end` | required with `--fetch` | End date `YYYY-MM-DD` (exclusive) |
+| `--output` | `Data/raw/<Type>/<SYMBOL>_<INTERVAL>_<START>_<END>.csv` | Output path |
 
 ```bash
-python fetch_stocks.py --fetch --symbol AAPL --interval 1d --start 2020-01-01 --end 2026-01-01
-python fetch_stocks.py --fetch --clean --symbol 0700.HK --interval 1d --start 2020-01-01 --end 2026-01-01
-python fetch_stocks.py --clean Data/raw/Stocks/AAPL_1d_2020-01-01_2026-01-01.csv
+python data_scripts/fetch.py --source crypto --fetch --clean --symbol BTCUSDT --interval 1d --start 2018-01-01 --end 2025-01-01
+python data_scripts/fetch.py --source stocks --fetch --clean --symbol SPY --interval 1d --start 2010-01-01 --end 2025-01-01
+python data_scripts/fetch.py --source crypto --clean Data/raw/Crypto/BTCUSDT_1d_2018-01-01_2025-01-01.csv
 ```
 
-> Intraday intervals (`< 1d`) are only available for the last 60 days.
+> Stock intraday intervals (`< 1d`) are only available for the last 60 days. HK tickers use the `.HK` suffix.
 
 ---
 
 ## Output Format
 
-### Crypto (`fetch_klines.py`)
+### Crypto (`--source crypto`)
 
 | Column | Type | Description |
 |---|---|---|
@@ -89,7 +66,7 @@ python fetch_stocks.py --clean Data/raw/Stocks/AAPL_1d_2020-01-01_2026-01-01.csv
 | `taker_buy_volume` | float | Taker buy volume in base asset |
 | `taker_buy_quote_volume` | float | Taker buy volume in quote asset (USDT) |
 
-### Equities (`fetch_stocks.py`)
+### Equities (`--source stocks`)
 
 | Column | Type | Description |
 |---|---|---|
@@ -105,7 +82,7 @@ python fetch_stocks.py --clean Data/raw/Stocks/AAPL_1d_2020-01-01_2026-01-01.csv
 
 ## Cleaning Steps
 
-Both scripts apply the same pipeline:
+`fetch.py` applies this pipeline (gap reporting is crypto-only):
 
 1. **Deduplicate** — remove rows with duplicate timestamps
 2. **Cast types** — `timestamp` → `int`, `num_trades` / `volume` (stocks) → `int`, others → `float`
@@ -130,18 +107,18 @@ Build candidate factors → screen by Information Coefficient (IC) / ICIR with s
 ## Modules
 
 ```
-factors/
+factors/                     factor library (importable, no I/O)
   build.py     factor formulas (causal rolling ops, groupby symbol)
   catalog.py   registry mapping name → (callable, category, hypothesis)
   ic.py        cross-sectional Spearman IC per date, ICIR, rolling sign-stability
   screen.py    |ICIR_ann|≥0.5 ∧ sign_stability≥0.70  then  |ρ|>0.8 corr pruning
-  io.py        cleaned CSVs → long-format parquet panel (date, symbol, OHLCV [+sector])
-scripts/
-  build_universe_stocks.py   top 200 S&P 500 by market cap (yfinance fast_info)
-  build_universe_crypto.py   top 30 Binance USDT pairs by 24h quote volume
-  download_universe.py       batch wrapper around fetch_stocks/fetch_klines
-  run_phase1.py              orchestrator: panel → factors → IC → screen → report
+phase1/                      factor-engineering pipeline
+  run_factors.py             panel + benchmark → factor matrix parquet
+  run_ic.py                  factor matrix → IC → screen → plots → report
 ```
+
+Phase 1 reads the panel parquet produced by `data_scripts/` (see Phase 0). The
+two phases talk only through on-disk parquet files, not Python imports.
 
 ## End-to-end run
 
@@ -149,26 +126,32 @@ scripts/
 
 ```bash
 # 1. Universe (~5 min: 503 yfinance calls for market caps)
-python scripts/build_universe_stocks.py
+python data_scripts/build_universe_stocks.py
 
-# 2. Download all symbols (~2 min)
-python scripts/download_universe.py --asset stocks --start 2010-01-01 --end 2025-01-01
+# 2. Download + clean all symbols, then build the panel (~2 min)
+python data_scripts/download_universe.py --asset stocks --start 2010-01-01 --end 2025-01-01
 
 # 3. Benchmark (used for rs_vs_spy / beta_60 / idio_vol_60)
-python fetch_stocks.py --fetch --clean --symbol SPY --interval 1d --start 2010-01-01 --end 2025-01-01
+python data_scripts/fetch.py --source stocks --fetch --clean --symbol SPY --interval 1d --start 2010-01-01 --end 2025-01-01
 
-# 4. Phase 1 pipeline
-python scripts/run_phase1.py --asset stocks --start 2010-01-01 --end 2025-01-01
+# 4. Factors, then IC / screening / report
+python phase1/run_factors.py --asset stocks --start 2010-01-01 --end 2025-01-01
+python phase1/run_ic.py      --asset stocks --start 2010-01-01 --end 2025-01-01
 ```
 
 ### Crypto (Binance top 30 by 24h vol, 2018-2025)
 
 ```bash
-python scripts/build_universe_crypto.py
-python scripts/download_universe.py --asset crypto --start 2018-01-01 --end 2025-01-01
+python data_scripts/build_universe_crypto.py
+python data_scripts/download_universe.py --asset crypto --start 2018-01-01 --end 2025-01-01
 # BTCUSDT downloads as part of the universe → also serves as benchmark
-python scripts/run_phase1.py --asset crypto --start 2018-01-01 --end 2025-01-01
+python phase1/run_factors.py --asset crypto --start 2018-01-01 --end 2025-01-01
+python phase1/run_ic.py      --asset crypto --start 2018-01-01 --end 2025-01-01
 ```
+
+`download_universe.py` builds `Data/panels/<asset>.parquet` as its last step
+(pass `--no-panel` to skip). To rebuild only the panel from existing cleaned
+CSVs: `python data_scripts/panel.py --asset crypto --start 2018-01-01 --end 2025-01-01`.
 
 ## Factor categories
 
@@ -209,7 +192,7 @@ Each pipeline run writes:
 
 **Stocks** (199 symbols, 2010–2024): 9 survivors. Strongest: `amihud_illiq_20` (+, ICIR_ann ≈ 2.05), `ret_5` (-, 1-week reversal), `dist_ma_20` (-), `hl_spread_proxy_20` (+), `vol_of_vol_60` (+).
 
-**Crypto** (16 symbols after coverage filter, 2018–2024): 9 survivors. Strongest: `idio_vol_btc_60` (-, low-vol anomaly, ICIR_ann ≈ -3.23), `garman_klass_20` (-), `taker_buy_ratio_20` (+, order-flow), `amihud_illiq_20` (- — **sign-flipped vs equities**).
+**Crypto** (16 symbols after coverage filter, 2018–2024): 7 survivors. Strongest: `idio_vol_btc_60` (-, low-vol anomaly, ICIR_ann ≈ -3.46), `amihud_illiq_20` (- — **sign-flipped vs equities**), `garman_klass_20` (-), `vol_of_vol_60` (-), `taker_buy_ratio_20` (+, order-flow), `num_trades_z_60` (-), `ret_5` (-).
 
 ## Caveats
 
@@ -222,15 +205,22 @@ Each pipeline run writes:
 # Directory structure (full)
 
 ```
-fetch_stocks.py, fetch_klines.py         data ingestion
-factors/                                  factor library
-scripts/                                  orchestrators / batch wrappers
+data_scripts/                             everything that produces data
+  fetch.py                                fetch + clean one symbol (--source crypto|stocks)
+  build_universe_{stocks,crypto}.py       build the universe CSVs
+  download_universe.py                    download + clean universe, then build the panel
+  panel.py                                cleaned CSVs → long-format panel parquet
+factors/                                  factor library (importable, no I/O)
+  build.py, catalog.py, ic.py, screen.py
+phase1/                                   factor-engineering pipeline
+  run_factors.py                          panel + benchmark → factor matrix
+  run_ic.py                               factor matrix → IC → screen → report
 reports/                                  Phase 1 reports (tracked in git)
   *_factor_report.md, *_summary.csv, *.png
 Data/                                     (gitignored)
   raw/{Stocks,Crypto}/<sym>_<ivl>_<start>_<end>.csv
   cleaned/{Stocks,Crypto}/...             same shape, post-cleaning
-  universe/                                sp500_top200.csv, crypto_top30.csv
-  panels/                                  stocks.parquet, crypto.parquet
-  factors/                                 stocks.parquet, crypto.parquet  ← Phase 2 input
+  universe/                               sp500_top200.csv, crypto_top30.csv
+  panels/                                 stocks.parquet, crypto.parquet
+  factors/                                stocks.parquet, crypto.parquet  ← Phase 2 input
 ```
