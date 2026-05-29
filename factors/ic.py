@@ -56,8 +56,12 @@ def summarize_ic(ic: pd.Series, periods_per_year: int = 252) -> dict:
 def rolling_ic_sign_stability(ic: pd.Series, window: int = 252,
                               min_periods: int = 126) -> float:
     """
-    Fraction of rolling 12-month windows where mean(IC) has the same sign as
+    Fraction of rolling ~12-month windows where mean(IC) has the same sign as
     the overall mean(IC). Used as the 'consistent sign' screening criterion.
+
+    `window` should be one year of IC observations (bars_per_year) so the
+    criterion stays "12 months" regardless of bar frequency; daily defaults to
+    252, hourly callers pass ~8760.
     """
     ic = ic.dropna()
     if len(ic) < window:

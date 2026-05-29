@@ -34,7 +34,8 @@ FACTOR_DIR = ROOT / "Data" / "factors"
 
 
 def run_ic(fac: pd.DataFrame, panel: pd.DataFrame, asset: str,
-           horizon: int = 5) -> tuple[pd.DataFrame, dict[str, pd.Series]]:
+           horizon: int, periods_per_year: int
+           ) -> tuple[pd.DataFrame, dict[str, pd.Series]]:
     price = b.price_col(asset)
     fwd = fic.forward_return(panel, price, horizon=horizon)
     factor_names = [c for c in fac.columns if c not in ("date", "symbol")]
@@ -44,8 +45,9 @@ def run_ic(fac: pd.DataFrame, panel: pd.DataFrame, asset: str,
     for name in factor_names:
         ic_series = fic.daily_ic(fac[name], fwd, panel["date"])
         daily_ics[name] = ic_series
-        stats = fic.summarize_ic(ic_series)
-        stats["sign_stability"] = fic.rolling_ic_sign_stability(ic_series)
+        stats = fic.summarize_ic(ic_series, periods_per_year=periods_per_year)
+        stats["sign_stability"] = fic.rolling_ic_sign_stability(
+            ic_series, window=periods_per_year, min_periods=periods_per_year // 2)
         stats["factor"] = name
         rows.append(stats)
     summary = pd.DataFrame(rows).set_index("factor")
@@ -65,7 +67,10 @@ def make_corr_heatmap(corr: pd.DataFrame, out_path: Path):
 
 
 def make_rolling_ic_plot(daily_ics: dict, summary: pd.DataFrame,
-                         top_k: int, out_path: Path):
+                         top_k: int, out_path: Path, window: int):
+    # `window` is one quarter of IC observations (bars), so the smoothing spans
+    # ~3 months at any frequency: 63 on daily (252//4), 2190 on hourly (8760//4).
+    # A fixed 63-bar window would only smooth 2.6 days of hourly IC -> hairy plot.
     top = summary.assign(score=lambda d: d["icir_ann"].abs()) \
                  .sort_values("score", ascending=False).head(top_k).index.tolist()
     fig, ax = plt.subplots(figsize=(12, 5))
@@ -73,7 +78,8 @@ def make_rolling_ic_plot(daily_ics: dict, summary: pd.DataFrame,
         s = daily_ics[name].dropna()
         if len(s) == 0:
             continue
-        ax.plot(s.index, s.rolling(63, min_periods=21).mean(), label=name, lw=1.2)
+        ax.plot(s.index, s.rolling(window, min_periods=window // 3).mean(),
+                label=name, lw=1.2)
     ax.axhline(0, color="k", lw=0.6)
     ax.set_title(f"Rolling 3-month mean IC — top {top_k} factors by |ICIR|")
     ax.set_ylabel("IC")
@@ -93,9 +99,9 @@ def write_report(asset: str, summary: pd.DataFrame, panel: pd.DataFrame,
     lines.append(f"# Phase 1 Factor Report — {asset.upper()}\n")
     lines.append(f"- Universe: {panel['symbol'].nunique()} symbols")
     lines.append(f"- Date range: {panel['date'].min().date()} → {panel['date'].max().date()}")
-    lines.append(f"- Forward return horizon: {horizon} days (log)")
+    lines.append(f"- Forward return horizon: {horizon} bars (log)")
     lines.append(f"- Candidates evaluated: **{n_candidates}**")
-    lines.append(f"- Passed IC filter (|ICIR_ann|≥0.5 & sign stability≥0.70): **{len(ic_passed)}**")
+    lines.append(f"- Passed IC filter (|ic_mean|≥0.02 & sign stability≥0.70): **{len(ic_passed)}**")
     lines.append(f"- Survivors after corr-pruning (|ρ|>0.8): **{len(survivors)}**\n")
 
     if asset == "stocks":
@@ -167,8 +173,11 @@ def main():
         )
 
     # 1. IC analysis
-    print("Computing IC/ICIR...")
-    summary, daily_ics = run_ic(fac, panel, args.asset, horizon=args.horizon)
+    ppy = dpanel.bars_per_year(args.asset, args.interval)
+    print(f"Computing IC/ICIR... (annualizing with {ppy} bars/year, "
+          f"interval={args.interval})")
+    summary, daily_ics = run_ic(fac, panel, args.asset,
+                                horizon=args.horizon, periods_per_year=ppy)
 
     # 2. Screen: IC filter, then correlation pruning on the wide factor matrix
     summary = fscr.apply_ic_filter(summary)
@@ -188,7 +197,8 @@ def main():
         plt.close(fig)
 
     ic_png = REPORTS / f"{args.asset}_rolling_ic.png"
-    make_rolling_ic_plot(daily_ics, summary, top_k=min(8, len(summary)), out_path=ic_png)
+    make_rolling_ic_plot(daily_ics, summary, top_k=min(8, len(summary)),
+                         out_path=ic_png, window=ppy // 4)
 
     out_md = REPORTS / f"{args.asset}_factor_report.md"
     write_report(args.asset, summary, panel, args.horizon,

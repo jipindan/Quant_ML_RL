@@ -2,11 +2,14 @@
 Load cleaned per-symbol CSVs into a single long-format panel parquet:
     (date, symbol, open, high, low, close, [adj_close,] volume, [crypto extras])
 
-Date is a normalized UTC date (no time) for daily data.
+The "date" column holds a normalized UTC date (no time) for daily bars, and the
+full UTC timestamp for intraday bars (1h, 15m, ...). Keeping the time component
+on intraday data is essential: .dt.normalize() would collapse all 24 hourly rows
+of a day onto one date, breaking the per-date cross-section that IC relies on.
 
-NOTE: _read_one uses .dt.normalize(), which truncates intraday times. This is
-correct for daily bars but would collapse all 24 hourly rows of a day onto one
-date for 1h data — handle before building intraday panels (tracked in Plan.md).
+This module is the single source of truth for bar-frequency semantics
+(`is_intraday`, `bars_per_year`); the factor / IC layers read from here so the
+whole pipeline responds to --interval rather than hard-coding daily.
 """
 from __future__ import annotations
 
@@ -21,11 +24,35 @@ CLEAN_CRYPTO = ROOT / "Data" / "cleaned" / "Crypto"
 UNIVERSE_DIR = ROOT / "Data" / "universe"
 PANEL_DIR = ROOT / "Data" / "panels"
 
+# How many bars one interval packs into a single day. Used both to classify
+# intraday vs daily and to annualize IC. Daily-and-coarser collapse to 1.
+BARS_PER_DAY = {
+    "1m": 1440, "3m": 480, "5m": 288, "15m": 96, "30m": 48,
+    "1h": 24, "2h": 12, "4h": 6, "6h": 4, "8h": 3, "12h": 2,
+    "1d": 1, "1w": 1, "1wk": 1, "1mo": 1,
+}
 
-def _read_one(path: Path, symbol: str) -> pd.DataFrame:
+
+def is_intraday(interval: str) -> bool:
+    """True for sub-daily bars (1h, 15m, ...), False for 1d and coarser."""
+    return BARS_PER_DAY.get(interval, 1) > 1
+
+
+def bars_per_year(asset: str, interval: str) -> int:
+    """
+    Number of bars per year — the IC-observation count used to annualize ICIR
+    and to size the sign-stability window. Crypto trades 24/7/365; equities
+    trade ~252 sessions/year.
+    """
+    trading_days = 365 if asset == "crypto" else 252
+    return trading_days * BARS_PER_DAY.get(interval, 1)
+
+
+def _read_one(path: Path, symbol: str, intraday: bool) -> pd.DataFrame:
     df = pd.read_csv(path)
     df["symbol"] = symbol
-    df["date"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True).dt.normalize()
+    ts = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+    df["date"] = ts if intraday else ts.dt.normalize()
     return df.drop(columns=["timestamp"])
 
 
@@ -59,7 +86,8 @@ def build_panel(asset: str, interval: str, start: str, end: str,
         raise FileNotFoundError(f"No cleaned files found in {root} for {start}-{end}")
 
     print(f"Loading {len(files)} {asset} files...")
-    frames = [_read_one(p, s) for p, s in tqdm(files)]
+    intraday = is_intraday(interval)
+    frames = [_read_one(p, s, intraday) for p, s in tqdm(files)]
     panel = pd.concat(frames, ignore_index=True)
 
     counts = panel.groupby("symbol").size()

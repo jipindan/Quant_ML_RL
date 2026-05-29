@@ -43,13 +43,16 @@ def load_bench(asset: str, bench_symbol: str | None, interval: str,
             f"--symbol {sym} --interval {interval} --start {start} --end {end}"
         )
     df = pd.read_csv(p)
-    df["date"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True).dt.normalize()
+    ts = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+    # Match the panel's date convention: full timestamp for intraday, normalized
+    # for daily — otherwise the panel["date"].map(bench) join silently misaligns.
+    df["date"] = ts if dpanel.is_intraday(interval) else ts.dt.normalize()
     return b.build_benchmark(df, asset)
 
 
 def build_factor_matrix(panel: pd.DataFrame, asset: str,
-                        bench: pd.DataFrame | None) -> pd.DataFrame:
-    factors = catalog_for(asset)
+                        bench: pd.DataFrame | None, profile: str) -> pd.DataFrame:
+    factors = catalog_for(asset, profile)
     print(f"Computing {len(factors)} factors...")
     # Keep panel's (date, symbol) columns verbatim — including the tz-aware date
     # dtype — so the saved factor parquet stays row-aligned with the panel.
@@ -86,7 +89,9 @@ def main():
 
     bench = load_bench(args.asset, args.bench, args.interval, args.start, args.end)
 
-    fac = build_factor_matrix(panel, args.asset, bench)
+    profile = "hourly" if dpanel.is_intraday(args.interval) else "daily"
+    print(f"Window profile: {profile} (interval={args.interval})")
+    fac = build_factor_matrix(panel, args.asset, bench, profile)
 
     FACTOR_DIR.mkdir(parents=True, exist_ok=True)
     out = FACTOR_DIR / f"{args.asset}.parquet"

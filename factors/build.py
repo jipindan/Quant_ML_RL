@@ -36,9 +36,9 @@ def ret_n(panel, asset, n):
     return _log_ret(panel, asset, n)
 
 
-def mom_accel(panel, asset):
-    """Recent momentum minus distant momentum."""
-    return ret_n(panel, asset, 20) - ret_n(panel, asset, 60) / 3.0
+def mom_accel(panel, asset, fast=20, slow=60):
+    """Recent momentum minus (scale-matched) distant momentum."""
+    return ret_n(panel, asset, fast) - ret_n(panel, asset, slow) / (slow / fast)
 
 
 def mom_12_1(panel, asset):
@@ -223,10 +223,11 @@ def rank_in_sector(panel, base_factor: pd.Series) -> pd.Series:
 
 
 def relative_strength(panel, asset, bench: pd.DataFrame, n: int):
-    """ret_n minus benchmark ret_n on the same date."""
+    """ret_n minus benchmark n-bar log return on the same date."""
     own = ret_n(panel, asset, n)
-    b = bench.set_index("date")["bench_ret_" + str(n)]
-    aligned = panel["date"].map(b)
+    bp = bench.set_index("date")["bench_price"]
+    bench_ret_n = np.log(bp / bp.shift(n))   # log(p_t / p_{t-n}) for any window
+    aligned = panel["date"].map(bench_ret_n)
     return own - aligned.values
 
 
@@ -267,11 +268,13 @@ def idio_vol(panel, asset, bench: pd.DataFrame, n: int = 60):
 def build_benchmark(bench_panel: pd.DataFrame, asset: str) -> pd.DataFrame:
     """
     bench_panel: single-symbol panel for SPY (stocks) or BTCUSDT (crypto).
-    Returns df with columns: date, bench_logret, bench_ret_5, bench_ret_20, bench_ret_60.
+    Returns df with columns: date, bench_logret, bench_price.
+
+    n-bar benchmark returns are computed on demand in `relative_strength` from
+    bench_price, so this works for any window profile (no hard-coded windows).
     """
     p = price_col(asset)
     b = bench_panel.sort_values("date").copy()
     b["bench_logret"] = np.log(b[p] / b[p].shift(1))
-    for n in (5, 20, 60):
-        b[f"bench_ret_{n}"] = np.log(b[p] / b[p].shift(n))
-    return b[["date", "bench_logret", "bench_ret_5", "bench_ret_20", "bench_ret_60"]]
+    b["bench_price"] = b[p]
+    return b[["date", "bench_logret", "bench_price"]]

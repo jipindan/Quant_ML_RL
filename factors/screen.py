@@ -1,7 +1,13 @@
 """
 Factor screening:
-  1. |ICIR_ann| >= 0.5  AND  sign-stability >= 0.70
+  1. |ic_mean| >= 0.02  AND  sign-stability >= 0.70
   2. Pairwise Spearman corr pruning: if |rho| > 0.8, drop the lower-|ICIR| one.
+
+NOTE on the IC-filter metric: we screen on |ic_mean| rather than |ICIR_ann|
+because ICIR_ann = ICIR x sqrt(periods_per_year) is inflated ~6x at hourly
+(sqrt(8760) vs sqrt(252)), making a fixed threshold frequency-dependent.
+ic_mean is the average cross-sectional rank correlation and is frequency-neutral,
+so one threshold (0.02) applies to both daily and hourly.
 """
 from __future__ import annotations
 
@@ -9,9 +15,9 @@ import numpy as np
 import pandas as pd
 
 
-def apply_ic_filter(summary: pd.DataFrame, min_icir_ann: float = 0.5,
+def apply_ic_filter(summary: pd.DataFrame, min_ic_mean: float = 0.02,
                     min_stability: float = 0.70) -> pd.DataFrame:
-    keep = (summary["icir_ann"].abs() >= min_icir_ann) & \
+    keep = (summary["ic_mean"].abs() >= min_ic_mean) & \
            (summary["sign_stability"] >= min_stability)
     summary = summary.copy()
     summary["passes_ic"] = keep
